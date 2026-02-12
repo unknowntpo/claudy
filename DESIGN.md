@@ -187,6 +187,166 @@ App::new(base_path)
 | dirs       | Home directory resolution                        |
 | anyhow     | Error handling                                   |
 
+## Diagrams
+
+Visual diagrams live in `docs/`:
+
+- [`docs/architecture.excalidraw`](docs/architecture.excalidraw) — system overview
+  (open with [excalidraw.com](https://excalidraw.com) or VS Code Excalidraw extension)
+
+---
+
+## How Claude Code Manages Sessions
+
+Claudy is a **read-only observer** of Claude Code's on-disk session data.
+Understanding Claude Code's storage format is essential.
+
+### Directory Layout
+
+```
+~/.claude/projects/
+  |
+  +-- -Users-me-repo-my-project/          <-- one dir per working directory
+  |     |                                      (abs path, slashes -> hyphens)
+  |     +-- sessions-index.json            <-- metadata index (all sessions)
+  |     +-- 237ef260-...-.jsonl            <-- session transcript (one per session)
+  |     +-- 733cbd9d-...-.jsonl
+  |     +-- 237ef260-.../                  <-- per-session subagent container
+  |     |     +-- subagents/
+  |     |     |     +-- agent-a1b2c3.jsonl <-- subagent transcript
+  |     |     +-- tool-results/
+  |     |           +-- toolu_01X...txt    <-- tool execution output
+  |     +-- memory/
+  |           +-- MEMORY.md                <-- project-scoped persistent memory
+  |
+  +-- -Users-me-repo-other-project/
+        +-- ...
+```
+
+### sessions-index.json
+
+Written by Claude Code. Updated on session create, rename, and periodically.
+
+```json
+{
+  "version": 1,
+  "originalPath": "/Users/me/repo/my-project",
+  "entries": [
+    {
+      "sessionId":    "237ef260-dae8-4f78-9f36-dc5d8e882615",
+      "fullPath":     "/Users/me/.claude/projects/.../237ef260-....jsonl",
+      "fileMtime":    1769397427744,
+      "firstPrompt":  "How do I fix the login bug?",
+      "customTitle":  "login-fix",
+      "summary":      "Fixed authentication redirect loop",
+      "messageCount": 42,
+      "created":      "2026-02-10T08:30:00.000Z",
+      "modified":     "2026-02-10T09:15:00.000Z",
+      "gitBranch":    "fix-auth",
+      "projectPath":  "/Users/me/repo/my-project",
+      "isSidechain":  false
+    }
+  ]
+}
+```
+
+### JSONL File Format
+
+Each `.jsonl` file is a session transcript. One JSON object per line.
+Lines are **append-only** — Claude Code never modifies existing lines.
+
+**Common fields on most entry types:**
+
+```
+uuid          string   Unique entry ID
+parentUuid    string?  Parent message UUID (conversation tree)
+timestamp     string   ISO-8601 timestamp
+sessionId     string   Session UUID (same across all entries)
+type          string   Entry type (see below)
+slug          string   Human-readable session alias
+gitBranch     string?  Git branch at time of entry
+cwd           string   Working directory
+version       string   Claude Code version
+isSidechain   bool     true if from subagent
+```
+
+**Entry types and their purpose:**
+
+```
+type                   Purpose
+----                   -------
+user                   User message (prompt). content = text/tool_result array
+assistant              Claude response. content = text/tool_use array + usage tokens
+custom-title           /rename command result. customTitle = new name
+summary                Auto-generated session summary
+progress               Hook/tool progress (bash_progress, mcp_progress, etc.)
+file-history-snapshot  File backup metadata before edits
+queue-operation        Message queue enqueue/remove
+system                 System messages
+```
+
+**Example entries:**
+
+```jsonl
+{"type":"user","uuid":"abc...","sessionId":"237ef260-...","slug":"goofy-cuddling-globe","message":{"role":"user","content":"Fix the bug"},"timestamp":"2026-02-10T08:30:00Z"}
+{"type":"assistant","uuid":"def...","sessionId":"237ef260-...","message":{"role":"assistant","content":[{"type":"text","text":"Let me look..."}],"usage":{"input_tokens":1500,"output_tokens":200}},"timestamp":"2026-02-10T08:30:05Z"}
+{"type":"custom-title","customTitle":"login-fix","sessionId":"237ef260-..."}
+{"type":"summary","summary":"Fixed authentication redirect loop","leafUuid":"ghi..."}
+{"type":"file-history-snapshot","snapshot":{"trackedFileBackups":{"/path/to/file.rs":{"backupFileName":"...","version":1}}}}
+```
+
+### Session Lifecycle
+
+```
+ User runs `claude` in terminal
+   |
+   v
+ Claude Code creates {uuid}.jsonl
+   |
+   +-- Appends "user" entry for each prompt
+   +-- Appends "assistant" entry for each response
+   +-- Appends "progress" entries for tool execution
+   +-- Appends "file-history-snapshot" before edits
+   |
+   User runs /rename my-title
+   +-- Appends {"type":"custom-title","customTitle":"my-title"}
+   +-- Updates sessions-index.json with customTitle
+   |
+   Session ends (user quits or idle)
+   +-- Appends "summary" entry
+   +-- Updates sessions-index.json (messageCount, modified)
+   |
+   User resumes with `claude --continue`
+   +-- Appends to SAME .jsonl file
+   +-- Same sessionId throughout lifetime
+```
+
+### Session Identity
+
+A session has three identifiers:
+
+| ID | Example | Scope |
+|----|---------|-------|
+| sessionId (UUID) | `237ef260-dae8-...` | Primary key, unique globally |
+| Filename | `237ef260-dae8-....jsonl` | Same as sessionId |
+| slug | `goofy-cuddling-globe` | Human-readable, used for dedup |
+
+Multiple JSONL files can share a slug when Claude Code creates
+separate files per working directory for the same logical session.
+
+### Subagents
+
+When Claude Code spawns a Task agent, it creates subagent files:
+
+```
+{sessionId}/subagents/agent-{hash}.jsonl
+```
+
+Subagent entries have `isSidechain: true`. Claudy skips files
+matching `agent-*` pattern during session discovery.
+
+---
+
 ## Key Design Decisions
 
 - **Incremental parsing**: `file_offset` tracks last-read byte position.
