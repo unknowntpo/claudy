@@ -304,16 +304,21 @@ impl App {
                 }
             }
             MouseEventKind::ScrollDown => {
-                if self.rect_contains(self.chat_area, x, y) {
+                // Only scroll if this panel is focused (prevents scroll leaking)
+                if self.rect_contains(self.chat_area, x, y) && self.focus == FocusPanel::Chat {
                     self.scroll_chat_down(3);
-                } else if self.rect_contains(self.session_list_area, x, y) {
+                } else if self.rect_contains(self.session_list_area, x, y)
+                    && self.focus == FocusPanel::Sessions
+                {
                     self.move_selection(1);
                 }
             }
             MouseEventKind::ScrollUp => {
-                if self.rect_contains(self.chat_area, x, y) {
+                if self.rect_contains(self.chat_area, x, y) && self.focus == FocusPanel::Chat {
                     self.scroll_chat_up(3);
-                } else if self.rect_contains(self.session_list_area, x, y) {
+                } else if self.rect_contains(self.session_list_area, x, y)
+                    && self.focus == FocusPanel::Sessions
+                {
                     self.move_selection(-1);
                 }
             }
@@ -349,12 +354,24 @@ impl App {
         loop {
             terminal.draw(|f| crate::ui::draw(f, self))?;
 
+            // Wait for at least one event, then batch-process ALL pending
+            // events before next redraw. This ensures focus changes (click/Tab)
+            // take effect immediately even with many queued scroll events.
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
             if event::poll(timeout)? {
-                match event::read()? {
-                    Event::Key(key) => self.handle_key_event(key),
-                    Event::Mouse(mouse) => self.handle_mouse_event(mouse),
-                    _ => {}
+                loop {
+                    match event::read()? {
+                        Event::Key(key) => self.handle_key_event(key),
+                        Event::Mouse(mouse) => self.handle_mouse_event(mouse),
+                        _ => {}
+                    }
+                    if self.should_quit {
+                        break;
+                    }
+                    // Keep reading if more events available (no wait)
+                    if !event::poll(Duration::ZERO)? {
+                        break;
+                    }
                 }
             }
 
