@@ -188,6 +188,7 @@ impl App {
                     FocusPanel::Sessions => FocusPanel::Chat,
                     FocusPanel::Chat => FocusPanel::Sessions,
                 };
+                Self::drain_events();
             }
             KeyCode::Char('j') | KeyCode::Down => match self.focus {
                 FocusPanel::Sessions => self.move_selection(1),
@@ -292,11 +293,14 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(_) => {
-                // Click to focus panel
+                let old_focus = self.focus;
                 if self.rect_contains(self.session_list_area, x, y) {
                     self.focus = FocusPanel::Sessions;
                 } else if self.rect_contains(self.chat_area, x, y) {
                     self.focus = FocusPanel::Chat;
+                }
+                if self.focus != old_focus {
+                    Self::drain_events();
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -319,6 +323,13 @@ impl App {
 
     fn rect_contains(&self, rect: Rect, x: u16, y: u16) -> bool {
         x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+    }
+
+    /// Drain all pending input events to cancel queued scrolls on focus change
+    fn drain_events() {
+        while event::poll(Duration::from_millis(0)).unwrap_or(false) {
+            let _ = event::read();
+        }
     }
 
     fn refresh_all(&mut self) {
