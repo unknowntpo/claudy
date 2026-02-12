@@ -281,9 +281,12 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         lines.len()
     };
+    let max_scroll = visual_lines.saturating_sub(inner_height);
     let scroll_offset: u16 = if app.chat_scroll_locked_to_bottom {
-        visual_lines.saturating_sub(inner_height) as u16
+        max_scroll as u16
     } else {
+        // Clamp scroll to max so it can't go past content
+        app.chat_scroll = app.chat_scroll.min(max_scroll);
         app.chat_scroll as u16
     };
     app.chat_total_lines = visual_lines;
