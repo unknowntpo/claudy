@@ -19,9 +19,11 @@ pub struct App {
     pub chat_scroll_locked_to_bottom: bool,
     pub filter_mode: bool,
     pub filter_text: Option<String>,
+    pub show_active_only: bool,
     pub should_quit: bool,
     pub base_path: PathBuf,
     pub watcher: Option<SessionWatcher>,
+    last_index_refresh: Instant,
 }
 
 impl App {
@@ -48,9 +50,11 @@ impl App {
             chat_scroll_locked_to_bottom: true,
             filter_mode: false,
             filter_text: None,
+            show_active_only: false,
             should_quit: false,
             base_path,
             watcher,
+            last_index_refresh: Instant::now(),
         })
     }
 
@@ -69,10 +73,23 @@ impl App {
                 }
             }
         }
+
+        // Periodically refresh sessions-index.json metadata (every 10s)
+        if self.last_index_refresh.elapsed() >= Duration::from_secs(10) {
+            session::refresh_index_metadata(&self.base_path, &mut self.sessions);
+            self.last_index_refresh = Instant::now();
+            self.update_sort();
+        }
     }
 
     fn handle_file_modified(&mut self, path: &PathBuf) {
-        // Find session by file path and read new lines
+        // Check if sessions-index.json changed
+        if path.file_name().and_then(|n| n.to_str()) == Some("sessions-index.json") {
+            session::refresh_index_metadata(&self.base_path, &mut self.sessions);
+            self.update_sort();
+            return;
+        }
+
         let session_id = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -83,7 +100,6 @@ impl App {
             let _ = session::read_new_lines(session);
             self.update_sort();
         } else {
-            // Might be a new session file
             self.handle_file_created(path);
         }
     }
@@ -100,13 +116,28 @@ impl App {
         let old_selected = self.selected_session.clone();
         self.sorted_session_ids = sort_session_ids(&self.sessions);
 
-        // Apply filter if active
+        // Apply active filter
+        if self.show_active_only {
+            self.sorted_session_ids.retain(|id| {
+                self.sessions
+                    .get(id)
+                    .map(|s| s.is_active())
+                    .unwrap_or(false)
+            });
+        }
+
+        // Apply text filter
         if let Some(ref filter) = self.filter_text {
             let filter_lower = filter.to_lowercase();
             self.sorted_session_ids.retain(|id| {
                 if let Some(s) = self.sessions.get(id) {
                     s.display_name().to_lowercase().contains(&filter_lower)
                         || s.id.contains(&filter_lower)
+                        || s.summary
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&filter_lower)
                 } else {
                     false
                 }
@@ -117,6 +148,12 @@ impl App {
         if let Some(ref sel) = old_selected {
             if let Some(idx) = self.sorted_session_ids.iter().position(|id| id == sel) {
                 self.list_state.select(Some(idx));
+            } else if !self.sorted_session_ids.is_empty() {
+                self.list_state.select(Some(0));
+                self.selected_session = self.sorted_session_ids.first().cloned();
+            } else {
+                self.list_state.select(None);
+                self.selected_session = None;
             }
         }
     }
@@ -136,16 +173,18 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
             KeyCode::Enter => self.select_current(),
             KeyCode::Char('r') => self.refresh_all(),
+            KeyCode::Char('a') => {
+                self.show_active_only = !self.show_active_only;
+                self.update_sort();
+            }
             KeyCode::Char('/') => {
                 self.filter_mode = true;
                 self.filter_text = Some(String::new());
             }
             KeyCode::Char('G') => {
-                // Scroll chat to bottom
                 self.chat_scroll_locked_to_bottom = true;
             }
             KeyCode::Char('g') => {
-                // Scroll chat to top
                 self.chat_scroll = 0;
                 self.chat_scroll_locked_to_bottom = false;
             }
@@ -170,7 +209,6 @@ impl App {
             }
             KeyCode::Enter => {
                 self.filter_mode = false;
-                // Keep filter active
                 self.update_sort();
             }
             KeyCode::Backspace => {
@@ -206,7 +244,6 @@ impl App {
             current.saturating_sub((-delta) as usize)
         };
         self.list_state.select(Some(new_idx));
-        // Auto-select for preview
         self.selected_session = self.sorted_session_ids.get(new_idx).cloned();
         self.chat_scroll_locked_to_bottom = true;
     }

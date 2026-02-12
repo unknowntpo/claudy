@@ -30,6 +30,7 @@ struct RawMessage {
     #[serde(rename = "gitBranch")]
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
+    pub slug: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +209,7 @@ pub fn parse_line(line: &str) -> Option<SessionMessage> {
 pub struct SessionMeta {
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
+    pub slug: Option<String>,
 }
 
 pub fn extract_meta(line: &str) -> Option<SessionMeta> {
@@ -217,5 +219,6 @@ pub fn extract_meta(line: &str) -> Option<SessionMeta> {
     Some(SessionMeta {
         git_branch: raw.git_branch,
         cwd: raw.cwd,
+        slug: raw.slug,
     })
 }

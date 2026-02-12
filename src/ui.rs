@@ -42,12 +42,22 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
         .enumerate()
         .map(|(i, id)| {
             let session = &app.sessions[id];
-            let is_active = app
+            let is_selected = app
                 .selected_session
                 .as_ref()
                 .map(|s| s == id)
                 .unwrap_or(false);
-            let prefix = if is_active { "● " } else { "  " };
+            let is_active = session.is_active();
+            let prefix = if is_active && is_selected {
+                "● "
+            } else if is_active {
+                "● "
+            } else if is_selected {
+                "○ "
+            } else {
+                "  "
+            };
+            let prefix_color = if is_active { Color::Green } else { Color::DarkGray };
             let name = session.display_name();
             let time = session
                 .last_activity
@@ -65,17 +75,18 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(prefix, style),
+                Span::styled(prefix, Style::default().fg(prefix_color)),
                 Span::styled(name, style),
                 Span::styled(format!(" [{}] {}", msg_count, time), Style::default().fg(Color::DarkGray)),
             ]))
         })
         .collect();
 
+    let active_label = if app.show_active_only { " [active] " } else { "" };
     let title = if let Some(ref filter) = app.filter_text {
-        format!(" Sessions (/{}) ", filter)
+        format!(" Sessions{} (/{}) ", active_label, filter)
     } else {
-        format!(" Sessions ({}) ", sessions.len())
+        format!(" Sessions{} ({}) ", active_label, sessions.len())
     };
 
     let list = List::new(items)
@@ -118,7 +129,7 @@ fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
             let tokens_in = format_tokens(session.total_tokens_in);
             let tokens_out = format_tokens(session.total_tokens_out);
 
-            vec![
+            let mut info_lines = vec![
                 Line::from(vec![
                     Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(branch, Style::default().fg(Color::Green)),
@@ -142,13 +153,21 @@ fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        session.short_id(),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+                    if session.is_active() {
+                        Span::styled("active", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::styled("idle", Style::default().fg(Color::DarkGray))
+                    },
                 ]),
-            ]
+            ];
+            if let Some(ref summary) = session.summary {
+                info_lines.push(Line::from(vec![
+                    Span::styled("Summary: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(summary.as_str(), Style::default().fg(Color::White)),
+                ]));
+            }
+            info_lines
         } else {
             vec![Line::from("No session selected")]
         }
@@ -219,9 +238,10 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(format!("{}: ", prefix), style),
         ]));
 
-        // Truncate long content for display
-        let display_content = if msg.content.len() > 500 {
-            format!("{}...", &msg.content[..500])
+        // Truncate long content for display (char-boundary safe)
+        let display_content = if msg.content.chars().count() > 500 {
+            let truncated: String = msg.content.chars().take(500).collect();
+            format!("{}...", truncated)
         } else {
             msg.content.clone()
         };
@@ -272,7 +292,10 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let mode_text = if app.filter_mode {
         format!("FILTER: /{}", app.filter_text.as_deref().unwrap_or(""))
     } else {
-        "q:quit  j/k:navigate  Enter:select  r:refresh  /:filter  G/g:scroll".to_string()
+        format!(
+            "q:quit  j/k:nav  Enter:select  r:refresh  /:filter  a:active({})  G/g:scroll",
+            if app.show_active_only { "on" } else { "off" }
+        )
     };
 
     let bar = Paragraph::new(Line::from(vec![
