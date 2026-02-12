@@ -187,12 +187,136 @@ App::new(base_path)
 | dirs       | Home directory resolution                        |
 | anyhow     | Error handling                                   |
 
-## Diagrams
+## System Architecture
 
-Visual diagrams live in `docs/`:
+```
++-------------------+         +-------------------------------+
+|                   |  writes |  ~/.claude/projects/<slug>/   |
+|   Claude Code     +-------->|                               |
+|   (CLI)           |         |  +-------------------------+  |       +---------------------+
+|                   |         |  | {uuid}.jsonl            |  | watch |                     |
++-------------------+         |  | (session transcripts)   +-------->|  SessionWatcher      |
+                              |  +-------------------------+  |       |  (notify crate)      |
+                              |                               |       |  watcher.rs          |
+                              |  +-------------------------+  |       +----------+----------+
+                              |  | sessions-index.json     |  | watch            |
+                              |  | (metadata & titles)     +-------->            | WatchEvent
+                              |  +-------------------------+  |       +----------v----------+
+                              +-------------------------------+       |                     |
+                                                                      |  App (Event Loop)   |
+                              +-------------------+  crossterm        |  app.rs             |
+                              |  User             |  key/mouse        |                     |
+                              |  (keyboard/mouse) +------------------>|  - sort sessions    |
+                              +-------------------+                   |  - dedup by slug    |
+                                                                      |  - filter active    |
+                                                                      |  - merge titles     |
+                                                                      +---+-------------+---+
+                                                                          |             |
+                                                                 parse    |             |  render
+                                                                          v             v
+                                                              +-----------+--+  +-------+--------+
+                                                              |              |  |                 |
+                                                              | Session      |  | UI Renderer     |
+                                                              | Parser       |  | (ratatui)       |
+                                                              | session.rs   |  | ui.rs           |
+                                                              | message.rs   |  |                 |
+                                                              |              |  +-------+---------+
+                                                              +--------------+          |
+                                                                                        v
+                                                                          +-------------+----------+
+                                                                          | +--------+ +---------+ |
+                                                                          | |Session | |  Chat   | |
+                                                                          | | List   | | Stream  | |
+                                                                          | |--------| |         | |
+                                                                          | |Session | |  (scroll| |
+                                                                          | | Info   | |   able) | |
+                                                                          | +--------+ +---------+ |
+                                                                          |      Terminal TUI      |
+                                                                          +------------------------+
+```
 
-- [`docs/architecture.excalidraw`](docs/architecture.excalidraw) — system overview
-  (open with [excalidraw.com](https://excalidraw.com) or VS Code Excalidraw extension)
+### Component Interactions
+
+```
+                        250ms tick
+                  +------------------+
+                  |                  |
+          +-------v-------+  +------+-------+
+          | crossterm     |  | watcher.poll |
+          | event::poll() |  | try_recv()   |
+          +-------+-------+  +------+-------+
+                  |                  |
+     Key/Mouse   |    FileModified  |  FileCreated
+                  v                  v
+          +-------------------------------+
+          |          App::tick()           |
+          |                               |
+          |  .jsonl changed?              |
+          |    -> read_new_lines()        |    Incremental: seek to
+          |       (session.rs)            |    file_offset, parse
+          |                               |    only new lines
+          |  sessions-index.json changed? |
+          |    -> refresh_index_metadata()|    Re-read titles/summaries
+          |                               |
+          |  New .jsonl?                  |
+          |    -> discover_single_session |    Full parse of new file
+          |                               |
+          +---------------+---------------+
+                          |
+                          v
+                  +-------+--------+
+                  |  update_sort() |
+                  |                |
+                  |  1. sort DESC  |
+                  |  2. dedup slug |
+                  |  3. filter     |
+                  +-------+--------+
+                          |
+                          v
+                  +-------+--------+
+                  |  terminal.draw |
+                  |  (ui::draw)    |
+                  +----------------+
+```
+
+### JSONL Entry Flow (what Claude Code writes, what Claudy reads)
+
+```
+ Claude Code writes to {uuid}.jsonl:
+ ====================================
+
+ +-- {"type":"user",    "message":{"content":"Fix bug"}, "slug":"goofy-...", ...}
+ +-- {"type":"assistant","message":{"content":[...],"usage":{...}}, ...}
+ +-- {"type":"progress", "data":{"type":"bash_progress",...}, ...}
+ +-- {"type":"assistant","message":{"content":[{"type":"tool_use",...}]}, ...}
+ +-- {"type":"file-history-snapshot", "snapshot":{...}}           <-- skipped
+ +-- {"type":"custom-title","customTitle":"my-project", ...}
+ +-- {"type":"summary",  "summary":"Fixed the auth bug", ...}
+ +-- {"type":"queue-operation", ...}                              <-- skipped
+
+                        |
+                        |  Claudy reads each line
+                        v
+
+               +--------+--------+
+               | extract_meta()  |  -> SessionMeta { git_branch, cwd,
+               | (message.rs)    |     slug, summary, custom_title }
+               +-----------------+
+               +--------+--------+
+               | parse_line()    |  -> SessionMessage { msg_type,
+               | (message.rs)    |     timestamp, content, tokens }
+               +-----------------+
+
+  Entry type        extract_meta()          parse_line()
+  ----------        --------------          ------------
+  user              branch/cwd/slug         User message
+  assistant         branch/cwd/slug         Assistant msg (or ToolUse)
+  custom-title      custom_title            (skipped)
+  summary           summary                 (skipped)
+  progress          (skipped)               Progress marker
+  file-history-*    (skipped)               (skipped)
+  queue-operation   (skipped)               (skipped)
+```
 
 ---
 
