@@ -31,6 +31,8 @@ struct RawMessage {
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
     pub slug: Option<String>,
+    /// Present on "type": "summary" lines
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,20 +207,34 @@ pub fn parse_line(line: &str) -> Option<SessionMessage> {
     })
 }
 
-/// Extract metadata from the first user message in a session
 pub struct SessionMeta {
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
     pub slug: Option<String>,
+    pub summary: Option<String>,
 }
 
+/// Extract metadata from a JSONL line. Works on both regular messages
+/// (with sessionId) and "type": "summary" lines.
 pub fn extract_meta(line: &str) -> Option<SessionMeta> {
     let raw: RawMessage = serde_json::from_str(line).ok()?;
-    // Only return meta if we have a session id (indicates this is a real message)
+
+    // "type": "summary" lines have summary but no sessionId
+    if raw.msg_type == "summary" {
+        return Some(SessionMeta {
+            git_branch: None,
+            cwd: None,
+            slug: None,
+            summary: raw.summary,
+        });
+    }
+
+    // Regular messages need sessionId
     raw.session_id?;
     Some(SessionMeta {
         git_branch: raw.git_branch,
         cwd: raw.cwd,
         slug: raw.slug,
+        summary: None,
     })
 }

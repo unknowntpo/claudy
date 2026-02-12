@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, FocusPanel};
 use crate::message::MessageType;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -28,6 +28,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
         .split(h_chunks[0]);
+
+    // Store rects for mouse hit testing
+    app.session_list_area = left_chunks[0];
+    app.chat_area = h_chunks[1];
 
     draw_session_list(f, app, left_chunks[0]);
     draw_session_info(f, app, left_chunks[1]);
@@ -89,12 +93,17 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
         format!(" Sessions{} ({}) ", active_label, sessions.len())
     };
 
+    let border_color = if app.focus == FocusPanel::Sessions {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(border_color)),
         )
         .highlight_style(
             Style::default()
@@ -289,12 +298,17 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         " Chat (select a session) ".to_string()
     };
 
+    let chat_border = if app.focus == FocusPanel::Chat {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    };
     let chat = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(chat_border)),
         )
         .wrap(Wrap { trim: false })
         .scroll((scroll_offset, 0));
@@ -306,10 +320,17 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let mode_text = if app.filter_mode {
         format!("FILTER: /{}", app.filter_text.as_deref().unwrap_or(""))
     } else {
-        format!(
-            "q:quit  j/k:nav  Enter:select  r:refresh  /:filter  a:active({})  G/g:scroll",
-            if app.show_active_only { "on" } else { "off" }
-        )
+        {
+            let focus_label = match app.focus {
+                FocusPanel::Sessions => "sessions",
+                FocusPanel::Chat => "chat",
+            };
+            format!(
+                "q:quit  Tab:focus({})  j/k:nav  Enter:select  r:refresh  /:filter  a:active({})",
+                focus_label,
+                if app.show_active_only { "on" } else { "off" }
+            )
+        }
     };
 
     let bar = Paragraph::new(Line::from(vec![

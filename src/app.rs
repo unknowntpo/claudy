@@ -3,11 +3,18 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 
 use crate::session::{self, Session};
 use crate::watcher::{SessionWatcher, WatchEvent};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FocusPanel {
+    Sessions,
+    Chat,
+}
 
 pub struct App {
     pub sessions: HashMap<String, Session>,
@@ -20,9 +27,13 @@ pub struct App {
     pub filter_mode: bool,
     pub filter_text: Option<String>,
     pub show_active_only: bool,
+    pub focus: FocusPanel,
     pub should_quit: bool,
     pub base_path: PathBuf,
     pub watcher: Option<SessionWatcher>,
+    /// Stored layout rects for mouse hit testing
+    pub session_list_area: Rect,
+    pub chat_area: Rect,
     last_index_refresh: Instant,
 }
 
@@ -51,9 +62,12 @@ impl App {
             filter_mode: false,
             filter_text: None,
             show_active_only: false,
+            focus: FocusPanel::Sessions,
             should_quit: false,
             base_path,
             watcher,
+            session_list_area: Rect::default(),
+            chat_area: Rect::default(),
             last_index_refresh: Instant::now(),
         })
     }
@@ -169,8 +183,20 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
+            KeyCode::Tab => {
+                self.focus = match self.focus {
+                    FocusPanel::Sessions => FocusPanel::Chat,
+                    FocusPanel::Chat => FocusPanel::Sessions,
+                };
+            }
+            KeyCode::Char('j') | KeyCode::Down => match self.focus {
+                FocusPanel::Sessions => self.move_selection(1),
+                FocusPanel::Chat => self.scroll_chat_down(3),
+            },
+            KeyCode::Char('k') | KeyCode::Up => match self.focus {
+                FocusPanel::Sessions => self.move_selection(-1),
+                FocusPanel::Chat => self.scroll_chat_up(3),
+            },
             KeyCode::Enter => self.select_current(),
             KeyCode::Char('r') => self.refresh_all(),
             KeyCode::Char('a') => {
@@ -188,14 +214,8 @@ impl App {
                 self.chat_scroll = 0;
                 self.chat_scroll_locked_to_bottom = false;
             }
-            KeyCode::PageDown => {
-                self.chat_scroll = self.chat_scroll.saturating_add(20);
-                self.chat_scroll_locked_to_bottom = false;
-            }
-            KeyCode::PageUp => {
-                self.chat_scroll = self.chat_scroll.saturating_sub(20);
-                self.chat_scroll_locked_to_bottom = false;
-            }
+            KeyCode::PageDown => self.scroll_chat_down(20),
+            KeyCode::PageUp => self.scroll_chat_up(20),
             _ => {}
         }
     }
@@ -252,7 +272,53 @@ impl App {
         if let Some(idx) = self.list_state.selected() {
             self.selected_session = self.sorted_session_ids.get(idx).cloned();
             self.chat_scroll_locked_to_bottom = true;
+            self.focus = FocusPanel::Chat;
         }
+    }
+
+    fn scroll_chat_down(&mut self, amount: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_add(amount);
+        self.chat_scroll_locked_to_bottom = false;
+    }
+
+    fn scroll_chat_up(&mut self, amount: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_sub(amount);
+        self.chat_scroll_locked_to_bottom = false;
+    }
+
+    pub fn handle_mouse_event(&mut self, mouse: event::MouseEvent) {
+        let x = mouse.column;
+        let y = mouse.row;
+
+        match mouse.kind {
+            MouseEventKind::Down(_) => {
+                // Click to focus panel
+                if self.rect_contains(self.session_list_area, x, y) {
+                    self.focus = FocusPanel::Sessions;
+                } else if self.rect_contains(self.chat_area, x, y) {
+                    self.focus = FocusPanel::Chat;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if self.rect_contains(self.chat_area, x, y) {
+                    self.scroll_chat_down(3);
+                } else if self.rect_contains(self.session_list_area, x, y) {
+                    self.move_selection(1);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.rect_contains(self.chat_area, x, y) {
+                    self.scroll_chat_up(3);
+                } else if self.rect_contains(self.session_list_area, x, y) {
+                    self.move_selection(-1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rect_contains(&self, rect: Rect, x: u16, y: u16) -> bool {
+        x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
     }
 
     fn refresh_all(&mut self) {
@@ -263,6 +329,9 @@ impl App {
     }
 
     pub fn run_event_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
+        // Enable mouse capture
+        crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
+
         let tick_rate = Duration::from_millis(250);
         let mut last_tick = Instant::now();
 
@@ -271,8 +340,10 @@ impl App {
 
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
             if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key_event(key);
+                match event::read()? {
+                    Event::Key(key) => self.handle_key_event(key),
+                    Event::Mouse(mouse) => self.handle_mouse_event(mouse),
+                    _ => {}
                 }
             }
 
@@ -286,6 +357,7 @@ impl App {
             }
         }
 
+        crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)?;
         Ok(())
     }
 }

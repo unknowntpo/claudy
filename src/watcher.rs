@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use anyhow::Result;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 pub enum WatchEvent {
     FileModified(PathBuf),
@@ -21,10 +21,16 @@ impl SessionWatcher {
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 for path in &event.paths {
-                    // Only care about .jsonl files
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    let ext = path.extension().and_then(|e| e.to_str());
+                    let fname = path.file_name().and_then(|n| n.to_str());
+
+                    // Only care about .jsonl files and sessions-index.json
+                    let dominated = ext == Some("jsonl")
+                        || fname == Some("sessions-index.json");
+                    if !dominated {
                         continue;
                     }
+
                     let watch_event = match event.kind {
                         EventKind::Modify(_) => Some(WatchEvent::FileModified(path.clone())),
                         EventKind::Create(_) => Some(WatchEvent::FileCreated(path.clone())),
@@ -37,6 +43,8 @@ impl SessionWatcher {
             }
         })?;
 
+        // Reduce poll interval for lower latency on macOS FSEvents
+        watcher.configure(Config::default().with_poll_interval(std::time::Duration::from_secs(1)))?;
         watcher.watch(&watch_path, RecursiveMode::Recursive)?;
 
         Ok(Self {
@@ -53,5 +61,4 @@ impl SessionWatcher {
         }
         events
     }
-
 }

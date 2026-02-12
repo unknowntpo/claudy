@@ -190,6 +190,7 @@ fn parse_session_file(
     let mut git_branch = index_entry.and_then(|e| e.git_branch.clone());
     let mut cwd = index_entry.and_then(|e| e.project_path.clone());
     let mut slug: Option<String> = None;
+    let mut inline_summary: Option<String> = None;
     let mut last_activity = Utc::now();
     let mut total_tokens_in: u64 = 0;
     let mut total_tokens_out: u64 = 0;
@@ -203,7 +204,7 @@ fn parse_session_file(
         }
 
         // Keep extracting metadata until we have all fields
-        if git_branch.is_none() || cwd.is_none() || slug.is_none() {
+        if git_branch.is_none() || cwd.is_none() || slug.is_none() || inline_summary.is_none() {
             if let Some(meta) = message::extract_meta(&line) {
                 if git_branch.is_none() {
                     git_branch = meta.git_branch;
@@ -213,6 +214,9 @@ fn parse_session_file(
                 }
                 if slug.is_none() {
                     slug = meta.slug;
+                }
+                if inline_summary.is_none() {
+                    inline_summary = meta.summary;
                 }
             }
         }
@@ -234,7 +238,9 @@ fn parse_session_file(
         project_slug: project_slug.to_string(),
         slug,
         custom_title: index_entry.and_then(|e| e.custom_title.clone()),
-        summary: index_entry.and_then(|e| e.summary.clone()),
+        summary: index_entry
+            .and_then(|e| e.summary.clone())
+            .or(inline_summary),
         git_branch,
         cwd,
         messages,
