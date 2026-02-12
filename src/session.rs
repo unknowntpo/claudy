@@ -32,11 +32,12 @@ pub struct Session {
 
 impl Session {
     pub fn display_name(&self) -> String {
-        // Priority: customTitle > slug > short session id
+        // Priority: customTitle > slug > summary > short session id
         let name = self
             .custom_title
             .as_deref()
             .or(self.slug.as_deref())
+            .or(self.summary.as_deref())
             .unwrap_or(self.short_id());
         if let Some(ref branch) = self.git_branch {
             format!("{} ({})", name, branch)
@@ -44,6 +45,7 @@ impl Session {
             name.to_string()
         }
     }
+
 
     pub fn short_id(&self) -> &str {
         &self.id[..8.min(self.id.len())]
@@ -131,6 +133,11 @@ pub fn discover_sessions(base_path: &Path) -> Result<HashMap<String, Session>> {
                 .unwrap_or("unknown")
                 .to_string();
 
+            // Skip subagent files
+            if session_id.starts_with("agent-") {
+                continue;
+            }
+
             let index_entry = index.get(&session_id);
 
             match parse_session_file(&file_path, &project_slug, index_entry) {
@@ -186,8 +193,6 @@ fn parse_session_file(
     let mut last_activity = Utc::now();
     let mut total_tokens_in: u64 = 0;
     let mut total_tokens_out: u64 = 0;
-    let mut meta_extracted = false;
-
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
@@ -197,8 +202,8 @@ fn parse_session_file(
             continue;
         }
 
-        // Extract metadata from early messages
-        if !meta_extracted {
+        // Keep extracting metadata until we have all fields
+        if git_branch.is_none() || cwd.is_none() || slug.is_none() {
             if let Some(meta) = message::extract_meta(&line) {
                 if git_branch.is_none() {
                     git_branch = meta.git_branch;
@@ -209,7 +214,6 @@ fn parse_session_file(
                 if slug.is_none() {
                     slug = meta.slug;
                 }
-                meta_extracted = true;
             }
         }
 

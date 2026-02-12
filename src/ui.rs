@@ -195,7 +195,6 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         &[]
     };
 
-    let inner_height = area.height.saturating_sub(2) as usize; // borders
     let mut lines: Vec<Line> = Vec::new();
 
     for msg in messages.iter() {
@@ -255,14 +254,14 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from("")); // blank separator
     }
 
-    // Auto-scroll: if at bottom or first render, show latest messages
+    // Auto-scroll: use u16::MAX when locked to bottom so ratatui handles
+    // wrapping correctly (line count != visual line count due to Wrap)
     let total_lines = lines.len();
-    let scroll_offset = if app.chat_scroll_locked_to_bottom || app.chat_scroll == 0 {
-        total_lines.saturating_sub(inner_height)
+    let scroll_offset: u16 = if app.chat_scroll_locked_to_bottom {
+        u16::MAX
     } else {
-        app.chat_scroll
+        app.chat_scroll as u16
     };
-    app.chat_scroll = scroll_offset;
     app.chat_total_lines = total_lines;
 
     let title = if let Some(ref id) = app.selected_session {
@@ -283,7 +282,7 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
                 .border_style(Style::default().fg(Color::Cyan)),
         )
         .wrap(Wrap { trim: false })
-        .scroll((scroll_offset as u16, 0));
+        .scroll((scroll_offset, 0));
 
     f.render_widget(chat, area);
 }
