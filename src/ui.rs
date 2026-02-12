@@ -254,15 +254,30 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from("")); // blank separator
     }
 
-    // Auto-scroll: use u16::MAX when locked to bottom so ratatui handles
-    // wrapping correctly (line count != visual line count due to Wrap)
-    let total_lines = lines.len();
+    // Estimate visual line count accounting for word wrapping
+    let inner_width = area.width.saturating_sub(2) as usize; // borders
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let visual_lines: usize = if inner_width > 0 {
+        lines
+            .iter()
+            .map(|line| {
+                let width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+                if width == 0 {
+                    1
+                } else {
+                    (width + inner_width - 1) / inner_width
+                }
+            })
+            .sum()
+    } else {
+        lines.len()
+    };
     let scroll_offset: u16 = if app.chat_scroll_locked_to_bottom {
-        u16::MAX
+        visual_lines.saturating_sub(inner_height) as u16
     } else {
         app.chat_scroll as u16
     };
-    app.chat_total_lines = total_lines;
+    app.chat_total_lines = visual_lines;
 
     let title = if let Some(ref id) = app.selected_session {
         if let Some(session) = app.sessions.get(id) {
