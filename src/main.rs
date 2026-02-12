@@ -26,7 +26,10 @@ fn main() -> Result<()> {
     });
 
     if !base_path.exists() {
-        eprintln!("Claude projects directory not found: {}", base_path.display());
+        eprintln!(
+            "Claude projects directory not found: {}",
+            base_path.display()
+        );
         eprintln!("Make sure Claude Code is installed and has been used at least once.");
         std::process::exit(1);
     }

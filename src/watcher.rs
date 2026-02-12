@@ -25,8 +25,7 @@ impl SessionWatcher {
                     let fname = path.file_name().and_then(|n| n.to_str());
 
                     // Only care about .jsonl files and sessions-index.json
-                    let dominated = ext == Some("jsonl")
-                        || fname == Some("sessions-index.json");
+                    let dominated = ext == Some("jsonl") || fname == Some("sessions-index.json");
                     if !dominated {
                         continue;
                     }
@@ -44,7 +43,8 @@ impl SessionWatcher {
         })?;
 
         // Reduce poll interval for lower latency on macOS FSEvents
-        watcher.configure(Config::default().with_poll_interval(std::time::Duration::from_secs(1)))?;
+        watcher
+            .configure(Config::default().with_poll_interval(std::time::Duration::from_secs(1)))?;
         watcher.watch(&watch_path, RecursiveMode::Recursive)?;
 
         Ok(Self {

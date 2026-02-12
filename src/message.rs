@@ -33,6 +33,9 @@ struct RawMessage {
     pub slug: Option<String>,
     /// Present on "type": "summary" lines
     pub summary: Option<String>,
+    /// Present on "type": "custom-title" lines
+    #[serde(rename = "customTitle")]
+    pub custom_title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +215,7 @@ pub struct SessionMeta {
     pub cwd: Option<String>,
     pub slug: Option<String>,
     pub summary: Option<String>,
+    pub custom_title: Option<String>,
 }
 
 /// Extract metadata from a JSONL line. Works on both regular messages
@@ -226,6 +230,18 @@ pub fn extract_meta(line: &str) -> Option<SessionMeta> {
             cwd: None,
             slug: None,
             summary: raw.summary,
+            custom_title: None,
+        });
+    }
+
+    // "type": "custom-title" lines carry the renamed title
+    if raw.msg_type == "custom-title" {
+        return Some(SessionMeta {
+            git_branch: None,
+            cwd: None,
+            slug: None,
+            summary: None,
+            custom_title: raw.custom_title,
         });
     }
 
@@ -236,5 +252,6 @@ pub fn extract_meta(line: &str) -> Option<SessionMeta> {
         cwd: raw.cwd,
         slug: raw.slug,
         summary: None,
+        custom_title: None,
     })
 }

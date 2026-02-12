@@ -1,10 +1,10 @@
 use chrono::Local;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::app::{App, FocusPanel};
@@ -52,16 +52,18 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
                 .map(|s| s == id)
                 .unwrap_or(false);
             let is_active = session.is_active();
-            let prefix = if is_active && is_selected {
-                "● "
-            } else if is_active {
+            let prefix = if is_active {
                 "● "
             } else if is_selected {
                 "○ "
             } else {
                 "  "
             };
-            let prefix_color = if is_active { Color::Green } else { Color::DarkGray };
+            let prefix_color = if is_active {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
             let name = session.display_name();
             let time = session
                 .last_activity
@@ -81,12 +83,19 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, Style::default().fg(prefix_color)),
                 Span::styled(name, style),
-                Span::styled(format!(" [{}] {}", msg_count, time), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" [{}] {}", msg_count, time),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]))
         })
         .collect();
 
-    let active_label = if app.show_active_only { " [active] " } else { "" };
+    let active_label = if app.show_active_only {
+        " [active] "
+    } else {
+        ""
+    };
     let title = if let Some(ref filter) = app.filter_text {
         format!(" Sessions{} (/{}) ", active_label, filter)
     } else {
@@ -117,19 +126,16 @@ fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
     let content = if let Some(ref id) = app.selected_session {
         if let Some(session) = app.sessions.get(id) {
-            let branch = session
-                .git_branch
-                .as_deref()
-                .unwrap_or("n/a");
+            let branch = session.git_branch.as_deref().unwrap_or("n/a");
             let cwd = session
                 .cwd
                 .as_deref()
                 .map(|c| {
                     // Abbreviate home dir
-                    if let Some(home) = dirs::home_dir() {
-                        if let Some(rest) = c.strip_prefix(home.to_str().unwrap_or("")) {
-                            return format!("~{}", rest);
-                        }
+                    if let Some(home) = dirs::home_dir()
+                        && let Some(rest) = c.strip_prefix(home.to_str().unwrap_or(""))
+                    {
+                        return format!("~{}", rest);
                     }
                     c.to_string()
                 })
@@ -138,7 +144,23 @@ fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
             let tokens_in = format_tokens(session.total_tokens_in);
             let tokens_out = format_tokens(session.total_tokens_out);
 
-            let mut info_lines = vec![
+            let mut info_lines = vec![];
+            if let Some(ref title) = session.custom_title {
+                info_lines.push(Line::from(vec![
+                    Span::styled("Title: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        title.as_str(),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+            info_lines.extend([
+                Line::from(vec![
+                    Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(&session.id, Style::default().fg(Color::DarkGray)),
+                ]),
                 Line::from(vec![
                     Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(branch, Style::default().fg(Color::Green)),
@@ -164,12 +186,17 @@ fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
                 Line::from(vec![
                     Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
                     if session.is_active() {
-                        Span::styled("active", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                        Span::styled(
+                            "active",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
                         Span::styled("idle", Style::default().fg(Color::DarkGray))
                     },
                 ]),
-            ];
+            ]);
             if let Some(ref summary) = session.summary {
                 info_lines.push(Line::from(vec![
                     Span::styled("Summary: ", Style::default().fg(Color::DarkGray)),
@@ -196,10 +223,7 @@ fn draw_session_info(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
     let messages = if let Some(ref id) = app.selected_session {
-        app.sessions
-            .get(id)
-            .map(|s| &s.messages[..])
-            .unwrap_or(&[])
+        app.sessions.get(id).map(|s| &s.messages[..]).unwrap_or(&[])
     } else {
         &[]
     };
@@ -216,24 +240,19 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         let (prefix, style) = match msg.msg_type {
             MessageType::User => (
                 "User",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             MessageType::Assistant => (
                 "Assistant",
-                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
             ),
-            MessageType::ToolUse => (
-                "Tool",
-                Style::default().fg(Color::Magenta),
-            ),
-            MessageType::Progress => (
-                "...",
-                Style::default().fg(Color::DarkGray),
-            ),
-            MessageType::Other => (
-                "Other",
-                Style::default().fg(Color::DarkGray),
-            ),
+            MessageType::ToolUse => ("Tool", Style::default().fg(Color::Magenta)),
+            MessageType::Progress => ("...", Style::default().fg(Color::DarkGray)),
+            MessageType::Other => ("Other", Style::default().fg(Color::DarkGray)),
         };
 
         // Skip progress messages in the chat view (too noisy)
@@ -247,14 +266,7 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         ]));
 
         // Truncate long content for display (char-boundary safe)
-        let display_content = if msg.content.chars().count() > 500 {
-            let truncated: String = msg.content.chars().take(500).collect();
-            format!("{}...", truncated)
-        } else {
-            msg.content.clone()
-        };
-
-        for content_line in display_content.lines() {
+        for content_line in msg.content.lines() {
             lines.push(Line::from(Span::styled(
                 format!("  {}", content_line),
                 Style::default().fg(Color::White),
@@ -263,33 +275,7 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from("")); // blank separator
     }
 
-    // Estimate visual line count accounting for word wrapping
-    let inner_width = area.width.saturating_sub(2) as usize; // borders
     let inner_height = area.height.saturating_sub(2) as usize;
-    let visual_lines: usize = if inner_width > 0 {
-        lines
-            .iter()
-            .map(|line| {
-                let width: usize = line.spans.iter().map(|s| s.content.len()).sum();
-                if width == 0 {
-                    1
-                } else {
-                    (width + inner_width - 1) / inner_width
-                }
-            })
-            .sum()
-    } else {
-        lines.len()
-    };
-    let max_scroll = visual_lines.saturating_sub(inner_height);
-    let scroll_offset: u16 = if app.chat_scroll_locked_to_bottom {
-        max_scroll as u16
-    } else {
-        // Clamp scroll to max so it can't go past content
-        app.chat_scroll = app.chat_scroll.min(max_scroll);
-        app.chat_scroll as u16
-    };
-    app.chat_total_lines = visual_lines;
 
     let title = if let Some(ref id) = app.selected_session {
         if let Some(session) = app.sessions.get(id) {
@@ -306,16 +292,27 @@ fn draw_chat_stream(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         Color::DarkGray
     };
-    let chat = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(chat_border)),
-        )
-        .wrap(Wrap { trim: false })
-        .scroll((scroll_offset, 0));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(chat_border));
 
+    // Use ratatui's built-in line_count for exact wrapped line calculation
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    let inner_width = area.width.saturating_sub(2);
+    let visual_lines = paragraph.line_count(inner_width);
+    let max_scroll = visual_lines.saturating_sub(inner_height);
+    let scroll_offset: u16 = if app.chat_scroll_locked_to_bottom {
+        max_scroll as u16
+    } else {
+        app.chat_scroll = app.chat_scroll.min(max_scroll);
+        app.chat_scroll as u16
+    };
+    app.chat_total_lines = visual_lines;
+
+    let chat = paragraph.scroll((scroll_offset, 0));
     f.render_widget(chat, area);
 }
 

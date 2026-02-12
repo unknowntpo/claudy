@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -96,7 +96,7 @@ impl App {
         }
     }
 
-    fn handle_file_modified(&mut self, path: &PathBuf) {
+    fn handle_file_modified(&mut self, path: &Path) {
         // Check if sessions-index.json changed
         if path.file_name().and_then(|n| n.to_str()) == Some("sessions-index.json") {
             session::refresh_index_metadata(&self.base_path, &mut self.sessions);
@@ -112,13 +112,19 @@ impl App {
 
         if let Some(session) = self.sessions.get_mut(&session_id) {
             let _ = session::read_new_lines(session);
+            // Auto-scroll to bottom when chat pane is focused and viewing this session
+            if self.focus == FocusPanel::Chat
+                && self.selected_session.as_deref() == Some(&session_id)
+            {
+                self.chat_scroll_locked_to_bottom = true;
+            }
             self.update_sort();
         } else {
             self.handle_file_created(path);
         }
     }
 
-    fn handle_file_created(&mut self, path: &PathBuf) {
+    fn handle_file_created(&mut self, path: &Path) {
         if let Ok(Some(session)) = session::discover_single_session(path) {
             let id = session.id.clone();
             self.sessions.insert(id, session);
@@ -129,6 +135,33 @@ impl App {
     fn update_sort(&mut self) {
         let old_selected = self.selected_session.clone();
         self.sorted_session_ids = sort_session_ids(&self.sessions);
+
+        // Deduplicate sessions with the same slug (keep the most recent).
+        // Before discarding duplicates, merge custom_title into the kept session.
+        {
+            let mut seen_slugs: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new(); // slug -> kept session id
+            self.sorted_session_ids.retain(|id| {
+                if let Some(session) = self.sessions.get(id)
+                    && let Some(ref slug) = session.slug
+                {
+                    if let Some(kept_id) = seen_slugs.get(slug) {
+                        // Duplicate: merge custom_title into the kept session
+                        if session.custom_title.is_some() {
+                            let ct = session.custom_title.clone();
+                            if let Some(kept) = self.sessions.get_mut(kept_id)
+                                && kept.custom_title.is_none()
+                            {
+                                kept.custom_title = ct;
+                            }
+                        }
+                        return false;
+                    }
+                    seen_slugs.insert(slug.clone(), id.clone());
+                }
+                true
+            });
+        }
 
         // Apply active filter
         if self.show_active_only {

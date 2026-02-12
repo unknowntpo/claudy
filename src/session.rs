@@ -14,6 +14,7 @@ use crate::message::{self, SessionMessage};
 const ACTIVE_THRESHOLD_SECS: u64 = 300; // 5 minutes
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Session {
     pub id: String,
     pub project_slug: String,
@@ -46,7 +47,6 @@ impl Session {
         }
     }
 
-
     pub fn short_id(&self) -> &str {
         &self.id[..8.min(self.id.len())]
     }
@@ -55,9 +55,7 @@ impl Session {
         let mtime = fs::metadata(&self.file_path)
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let elapsed = SystemTime::now()
-            .duration_since(mtime)
-            .unwrap_or_default();
+        let elapsed = SystemTime::now().duration_since(mtime).unwrap_or_default();
         elapsed.as_secs() < ACTIVE_THRESHOLD_SECS
     }
 }
@@ -86,11 +84,11 @@ struct IndexEntry {
 fn load_sessions_index(project_dir: &Path) -> HashMap<String, IndexEntry> {
     let index_path = project_dir.join("sessions-index.json");
     let mut map = HashMap::new();
-    if let Ok(data) = fs::read_to_string(&index_path) {
-        if let Ok(index) = serde_json::from_str::<SessionsIndex>(&data) {
-            for entry in index.entries {
-                map.insert(entry.session_id.clone(), entry);
-            }
+    if let Ok(data) = fs::read_to_string(&index_path)
+        && let Ok(index) = serde_json::from_str::<SessionsIndex>(&data)
+    {
+        for entry in index.entries {
+            map.insert(entry.session_id.clone(), entry);
         }
     }
     map
@@ -111,10 +109,7 @@ pub fn discover_sessions(base_path: &Path) -> Result<HashMap<String, Session>> {
             continue;
         }
 
-        let project_slug = project_entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let project_slug = project_entry.file_name().to_string_lossy().to_string();
 
         // Load sessions-index.json for this project
         let index = load_sessions_index(&project_path);
@@ -191,6 +186,7 @@ fn parse_session_file(
     let mut cwd = index_entry.and_then(|e| e.project_path.clone());
     let mut slug: Option<String> = None;
     let mut inline_summary: Option<String> = None;
+    let mut inline_custom_title: Option<String> = None;
     let mut last_activity = Utc::now();
     let mut total_tokens_in: u64 = 0;
     let mut total_tokens_out: u64 = 0;
@@ -203,21 +199,23 @@ fn parse_session_file(
             continue;
         }
 
-        // Keep extracting metadata until we have all fields
-        if git_branch.is_none() || cwd.is_none() || slug.is_none() || inline_summary.is_none() {
-            if let Some(meta) = message::extract_meta(&line) {
-                if git_branch.is_none() {
-                    git_branch = meta.git_branch;
-                }
-                if cwd.is_none() {
-                    cwd = meta.cwd;
-                }
-                if slug.is_none() {
-                    slug = meta.slug;
-                }
-                if inline_summary.is_none() {
-                    inline_summary = meta.summary;
-                }
+        // Extract metadata from every line (custom_title can appear anywhere)
+        if let Some(meta) = message::extract_meta(&line) {
+            if git_branch.is_none() {
+                git_branch = meta.git_branch;
+            }
+            if cwd.is_none() {
+                cwd = meta.cwd;
+            }
+            if slug.is_none() {
+                slug = meta.slug;
+            }
+            if inline_summary.is_none() {
+                inline_summary = meta.summary;
+            }
+            // custom_title: take the latest value (rename can happen at any point)
+            if meta.custom_title.is_some() {
+                inline_custom_title = meta.custom_title;
             }
         }
 
@@ -237,7 +235,9 @@ fn parse_session_file(
         id: session_id,
         project_slug: project_slug.to_string(),
         slug,
-        custom_title: index_entry.and_then(|e| e.custom_title.clone()),
+        custom_title: index_entry
+            .and_then(|e| e.custom_title.clone())
+            .or(inline_custom_title),
         summary: index_entry
             .and_then(|e| e.summary.clone())
             .or(inline_summary),
@@ -275,18 +275,20 @@ pub fn read_new_lines(session: &mut Session) -> Result<Vec<SessionMessage>> {
             continue;
         }
 
-        // Update metadata if not yet set
-        if session.git_branch.is_none() || session.cwd.is_none() || session.slug.is_none() {
-            if let Some(meta) = message::extract_meta(&line) {
-                if session.git_branch.is_none() {
-                    session.git_branch = meta.git_branch;
-                }
-                if session.cwd.is_none() {
-                    session.cwd = meta.cwd;
-                }
-                if session.slug.is_none() {
-                    session.slug = meta.slug;
-                }
+        // Update metadata from new lines
+        if let Some(meta) = message::extract_meta(&line) {
+            if session.git_branch.is_none() {
+                session.git_branch = meta.git_branch;
+            }
+            if session.cwd.is_none() {
+                session.cwd = meta.cwd;
+            }
+            if session.slug.is_none() {
+                session.slug = meta.slug;
+            }
+            // custom_title: always take the latest rename
+            if meta.custom_title.is_some() {
+                session.custom_title = meta.custom_title;
             }
         }
 
